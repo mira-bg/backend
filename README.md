@@ -1,4 +1,3 @@
-# Endpoint
 # API MiraDB - Elenco Completo Endpoints
 
 ## Base URL
