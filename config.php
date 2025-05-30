@@ -12,10 +12,6 @@ class Config {
     const API_TITLE = 'MiraDB Art API'; // Aggiornato il titolo
     const MAX_REQUESTS_PER_HOUR = 1000;
     
-    // Configurazione JWT (se implementi l'autenticazione)
-    const JWT_SECRET = 'your-secret-key-here-change-in-production';
-    const JWT_EXPIRE_TIME = 3600; // 1 ora
-    
     // Configurazione CORS
     const CORS_ORIGINS = ['*']; // In produzione, specifica i domini esatti
     const CORS_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'];
