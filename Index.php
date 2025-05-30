@@ -140,14 +140,14 @@ class API {
         $input = $this->getInput();
         
         // Validazione input
-        if (!Validator::validateRequired($input, ['name', 'email', 'password'])) {
+        if (!Validator::validateRequired($input, ['Username', 'Email', 'Password'])) {
             $this->sendResponse(400, null, 'Name, email and password are required');
             return;
         }
         
-        $name = Validator::sanitizeString($input['name']);
-        $email = Validator::sanitizeString($input['email']);
-        $password = $input['password'];
+        $name = Validator::sanitizeString($input['Username']);
+        $email = Validator::sanitizeString($input['Email']);
+        $password = $input['Password'];
         
         // Validazioni specifiche
         if (!Validator::validateEmail($email)) {
@@ -168,13 +168,13 @@ class API {
     private function login() {
         $input = $this->getInput();
         
-        if (!Validator::validateRequired($input, ['email', 'password'])) {
+        if (!Validator::validateRequired($input, ['Email', 'Password'])) {
             $this->sendResponse(400, null, 'Email and password are required');
             return;
         }
         
-        $email = Validator::sanitizeString($input['email']);
-        $password = $input['password'];
+        $email = Validator::sanitizeString($input['Email']);
+        $password = $input['Password'];
         
         $result = $this->auth->login($email, $password);
         $this->sendResponse($result['success'] ? 200 : 401, $result, $result['message']);
@@ -252,6 +252,65 @@ class API {
             ], 'Artisti retrieved successfully');
             
         } catch(PDOException $e) {
+            $this->sendResponse(500, null, 'Database error occurred');
+        }
+    }
+
+    private function getArtista($id) {
+        // Validazione ID numerico positivo
+        if (!is_numeric($id) || (int)$id <= 0) {
+            $this->sendResponse(400, null, 'Invalid artist ID');
+            return;
+        }
+        $id = (int)$id;
+
+        try {
+            // Recupera artista e (se presente) biografia in tutte le lingue
+            $stmt = $this->db->prepare("
+                SELECT A.*, 
+                    GROUP_CONCAT(B.Lingua, ':', B.Testo SEPARATOR '||') as Biografie
+                FROM Artisti A
+                LEFT JOIN Biografie B ON A.IdArtista = B.IdArtista
+                WHERE A.IdArtista = :id
+                GROUP BY A.IdArtista
+            ");
+            $stmt->bindParam(':id', $id, PDO::PARAM_INT);
+            $stmt->execute();
+            $result = $stmt->fetch();
+
+            if (!$result) {
+                $this->sendResponse(404, null, 'Artist not found');
+                return;
+            }
+
+            // Parsing biografie in array associativo lingua => testo
+            $biografie = [];
+            if (!empty($result['Biografie'])) {
+                $bioParts = explode('||', $result['Biografie']);
+                foreach ($bioParts as $part) {
+                    [$lingua, $testo] = explode(':', $part, 2) + [null, null];
+                    if ($lingua && $testo) {
+                        $biografie[$lingua] = $testo;
+                    }
+                }
+            }
+
+            $artist = [
+                'id' => $result['IdArtista'],
+                'nome' => $result['Nome'],
+                'cognome' => $result['Cognome'],
+                'pseudonimo' => $result['Pseudonimo'],
+                'data_nascita' => $result['DataNascita'],
+                'luogo_nascita' => $result['LuogoNascita'],
+                'data_morte' => $result['DataMorte'],
+                'luogo_morte' => $result['LuogoMorte'],
+                'stile' => $result['Stile'],
+                'nazionalita' => $result['Nazionalita'],
+                'biografie' => $biografie
+            ];
+
+            $this->sendResponse(200, $artist, 'Artist retrieved successfully');
+        } catch (PDOException $e) {
             $this->sendResponse(500, null, 'Database error occurred');
         }
     }

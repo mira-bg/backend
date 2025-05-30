@@ -1,52 +1,9 @@
 <?php
 require_once 'config.php';
 
-class JWT {
-    private static function base64UrlEncode($data) {
-        return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
-    }
-    
-    private static function base64UrlDecode($data) {
-        return base64_decode(str_pad(strtr($data, '-_', '+/'), strlen($data) % 4, '=', STR_PAD_RIGHT));
-    }
-    
-    public static function encode($payload, $secret) {
-        $header = json_encode(['typ' => 'JWT', 'alg' => 'HS256']);
-        $payload = json_encode($payload);
-        
-        $headerEncoded = self::base64UrlEncode($header);
-        $payloadEncoded = self::base64UrlEncode($payload);
-        
-        $signature = hash_hmac('sha256', $headerEncoded . '.' . $payloadEncoded, $secret, true);
-        $signatureEncoded = self::base64UrlEncode($signature);
-        
-        return $headerEncoded . '.' . $payloadEncoded . '.' . $signatureEncoded;
-    }
-    
-    public static function decode($jwt, $secret) {
-        $parts = explode('.', $jwt);
-        
-        if (count($parts) !== 3) {
-            throw new Exception('Invalid JWT format');
-        }
-        
-        list($headerEncoded, $payloadEncoded, $signatureEncoded) = $parts;
-        
-        $signature = self::base64UrlDecode($signatureEncoded);
-        $expectedSignature = hash_hmac('sha256', $headerEncoded . '.' . $payloadEncoded, $secret, true);
-        
-        if (!hash_equals($signature, $expectedSignature)) {
-            throw new Exception('Invalid JWT signature');
-        }
-        
-        $payload = json_decode(self::base64UrlDecode($payloadEncoded), true);
-        
-        if (isset($payload['exp']) && $payload['exp'] < time()) {
-            throw new Exception('JWT token expired');
-        }
-        
-        return $payload;
-    }
+// Avvia la sessione all'inizio di ogni richiesta
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
 }
 
 class AuthMiddleware {
@@ -56,247 +13,118 @@ class AuthMiddleware {
         $this->db = $db;
     }
     
+    // Controlla se l'utente è autenticato tramite sessione
     public function authenticate() {
-        $headers = getallheaders();
-        
-        if (!isset($headers['Authorization'])) {
-            $this->sendUnauthorized('Authorization header missing');
+        if (!isset($_SESSION['current_user'])) {
+            $this->sendUnauthorized('Not authenticated');
             return false;
         }
-        
-        $authHeader = $headers['Authorization'];
-        
-        if (!preg_match('/Bearer\s+(.*)$/i', $authHeader, $matches)) {
-            $this->sendUnauthorized('Invalid authorization format');
-            return false;
-        }
-        
-        $token = $matches[1];
-        
-        try {
-            $payload = JWT::decode($token, Config::JWT_SECRET);
-            
-            // Verifica se l'utente esiste ancora
-            $stmt = $this->db->prepare("SELECT id, name, email FROM users WHERE id = :id");
-            $stmt->bindParam(':id', $payload['user_id'], PDO::PARAM_INT);
-            $stmt->execute();
-            
-            $user = $stmt->fetch(PDO::FETCH_ASSOC);
-            
-            if (!$user) {
-                $this->sendUnauthorized('User not found');
-                return false;
-            }
-            
-            // Salva i dati dell'utente corrente
-            $_SESSION['current_user'] = $user;
-            
-            return $user;
-            
-        } catch (Exception $e) {
-            $this->sendUnauthorized('Invalid token: ' . $e->getMessage());
-            return false;
-        }
+        return $_SESSION['current_user'];
     }
-    
+
+    // Login: verifica credenziali e salva l'utente in sessione
     public function login($email, $password) {
         try {
-            $stmt = $this->db->prepare("SELECT id, name, email, password FROM users WHERE email = :email");
+            $stmt = $this->db->prepare("SELECT IdUtente, Username, Email, Password, Ruolo FROM Utenti WHERE Email = :email");
             $stmt->bindParam(':email', $email);
             $stmt->execute();
-            
+
             $user = $stmt->fetch(PDO::FETCH_ASSOC);
-            
-            if (!$user || !Utils::verifyPassword($password, $user['password'])) {
+
+            if (!$user || !Utils::verifyPassword($password, $user['Password'])) {
                 return ['success' => false, 'message' => 'Invalid credentials'];
             }
-            
-            // Genera il token JWT
-            $payload = [
-                'user_id' => $user['id'],
-                'email' => $user['email'],
-                'iat' => time(),
-                'exp' => time() + Config::JWT_EXPIRE_TIME
+
+            // Salva l'utente in sessione
+            $_SESSION['current_user'] = [
+                'id' => $user['IdUtente'],
+                'username' => $user['Username'],
+                'email' => $user['Email'],
+                'ruolo' => $user['Ruolo']
             ];
-            
-            $token = JWT::encode($payload, Config::JWT_SECRET);
-            
-            // Salva il token nel database (opzionale)
-            $stmt = $this->db->prepare("INSERT INTO api_tokens (user_id, token, expires_at) VALUES (:user_id, :token, :expires_at)");
-            $stmt->bindParam(':user_id', $user['id'], PDO::PARAM_INT);
-            $stmt->bindParam(':token', $token);
-            $stmt->bindParam(':expires_at', date('Y-m-d H:i:s', time() + Config::JWT_EXPIRE_TIME));
-            $stmt->execute();
-            
+
             return [
                 'success' => true,
-                'token' => $token,
-                'user' => [
-                    'id' => $user['id'],
-                    'name' => $user['name'],
-                    'email' => $user['email']
-                ],
-                'expires_in' => Config::JWT_EXPIRE_TIME
+                'user' => $_SESSION['current_user'],
+                'message' => 'Login successful'
             ];
-            
+
         } catch (PDOException $e) {
             return ['success' => false, 'message' => 'Database error'];
         }
     }
-    
+
+    // Registrazione: crea nuovo utente e salva in sessione
     public function register($name, $email, $password) {
         try {
             // Verifica se l'email esiste già
-            $stmt = $this->db->prepare("SELECT id FROM users WHERE email = :email");
+            $stmt = $this->db->prepare("SELECT IdUtente FROM Utenti WHERE Email = :email");
             $stmt->bindParam(':email', $email);
             $stmt->execute();
-            
+
             if ($stmt->fetch()) {
                 return ['success' => false, 'message' => 'Email already exists'];
             }
-            
-            // Hash della password
+
             $hashedPassword = Utils::hashPassword($password);
-            
+
             // Inserisce il nuovo utente
-            $stmt = $this->db->prepare("INSERT INTO users (name, email, password, created_at) VALUES (:name, :email, :password, NOW())");
-            $stmt->bindParam(':name', $name);
+            $stmt = $this->db->prepare("INSERT INTO Utenti (Username, Email, Password) VALUES (:username, :email, :password)");
+            $stmt->bindParam(':username', $name);
             $stmt->bindParam(':email', $email);
             $stmt->bindParam(':password', $hashedPassword);
             $stmt->execute();
-            
+
             $userId = $this->db->lastInsertId();
-            
-            // Genera il token JWT per il nuovo utente
-            $payload = [
-                'user_id' => $userId,
+
+            // Salva l'utente in sessione
+            $_SESSION['current_user'] = [
+                'id' => $userId,
+                'username' => $name,
                 'email' => $email,
-                'iat' => time(),
-                'exp' => time() + Config::JWT_EXPIRE_TIME
+                'ruolo' => 'user'
             ];
-            
-            $token = JWT::encode($payload, Config::JWT_SECRET);
-            
-            // Salva il token nel database
-            $stmt = $this->db->prepare("INSERT INTO api_tokens (user_id, token, expires_at) VALUES (:user_id, :token, :expires_at)");
-            $stmt->bindParam(':user_id', $userId, PDO::PARAM_INT);
-            $stmt->bindParam(':token', $token);
-            $stmt->bindParam(':expires_at', date('Y-m-d H:i:s', time() + Config::JWT_EXPIRE_TIME));
-            $stmt->execute();
-            
+
             return [
                 'success' => true,
                 'message' => 'User registered successfully',
-                'token' => $token,
-                'user' => [
-                    'id' => $userId,
-                    'name' => $name,
-                    'email' => $email
-                ],
-                'expires_in' => Config::JWT_EXPIRE_TIME
+                'user' => $_SESSION['current_user']
             ];
-            
+
         } catch (PDOException $e) {
             return ['success' => false, 'message' => 'Database error: ' . $e->getMessage()];
         }
     }
-    
-    public function logout($token = null) {
-        try {
-            if ($token) {
-                // Rimuove il token specifico dal database
-                $stmt = $this->db->prepare("DELETE FROM api_tokens WHERE token = :token");
-                $stmt->bindParam(':token', $token);
-                $stmt->execute();
-            } else {
-                // Se non è specificato un token, rimuove tutti i token dell'utente corrente
-                if (isset($_SESSION['current_user'])) {
-                    $stmt = $this->db->prepare("DELETE FROM api_tokens WHERE user_id = :user_id");
-                    $stmt->bindParam(':user_id', $_SESSION['current_user']['id'], PDO::PARAM_INT);
-                    $stmt->execute();
-                }
-            }
-            
-            // Pulisce la sessione
-            unset($_SESSION['current_user']);
-            
-            return ['success' => true, 'message' => 'Logged out successfully'];
-            
-        } catch (PDOException $e) {
-            return ['success' => false, 'message' => 'Logout error'];
-        }
+
+    // Logout: distrugge la sessione
+    public function logout() {
+        session_unset();
+        session_destroy();
+        return ['success' => true, 'message' => 'Logged out successfully'];
     }
-    
+
+    // Questi metodi non servono più senza token, ma li lasciamo per compatibilità
     public function refreshToken($oldToken) {
-        try {
-            $payload = JWT::decode($oldToken, Config::JWT_SECRET);
-            
-            // Verifica se l'utente esiste ancora
-            $stmt = $this->db->prepare("SELECT id, name, email FROM users WHERE id = :id");
-            $stmt->bindParam(':id', $payload['user_id'], PDO::PARAM_INT);
-            $stmt->execute();
-            
-            $user = $stmt->fetch(PDO::FETCH_ASSOC);
-            
-            if (!$user) {
-                return ['success' => false, 'message' => 'User not found'];
-            }
-            
-            // Genera un nuovo token
-            $newPayload = [
-                'user_id' => $user['id'],
-                'email' => $user['email'],
-                'iat' => time(),
-                'exp' => time() + Config::JWT_EXPIRE_TIME
-            ];
-            
-            $newToken = JWT::encode($newPayload, Config::JWT_SECRET);
-            
-            // Rimuove il vecchio token e inserisce il nuovo
-            $stmt = $this->db->prepare("DELETE FROM api_tokens WHERE token = :old_token");
-            $stmt->bindParam(':old_token', $oldToken);
-            $stmt->execute();
-            
-            $stmt = $this->db->prepare("INSERT INTO api_tokens (user_id, token, expires_at) VALUES (:user_id, :token, :expires_at)");
-            $stmt->bindParam(':user_id', $user['id'], PDO::PARAM_INT);
-            $stmt->bindParam(':token', $newToken);
-            $stmt->bindParam(':expires_at', date('Y-m-d H:i:s', time() + Config::JWT_EXPIRE_TIME));
-            $stmt->execute();
-            
-            return [
-                'success' => true,
-                'token' => $newToken,
-                'expires_in' => Config::JWT_EXPIRE_TIME
-            ];
-            
-        } catch (Exception $e) {
-            return ['success' => false, 'message' => 'Token refresh failed: ' . $e->getMessage()];
-        }
+        return ['success' => false, 'message' => 'Not implemented: session-based auth does not use tokens'];
     }
     
     public function validatePassword($password) {
         $errors = [];
-        
         if (strlen($password) < 8) {
             $errors[] = 'Password must be at least 8 characters long';
         }
-        
         if (!preg_match('/[A-Z]/', $password)) {
             $errors[] = 'Password must contain at least one uppercase letter';
         }
-        
         if (!preg_match('/[a-z]/', $password)) {
             $errors[] = 'Password must contain at least one lowercase letter';
         }
-        
         if (!preg_match('/[0-9]/', $password)) {
             $errors[] = 'Password must contain at least one number';
         }
-        
         if (!preg_match('/[^A-Za-z0-9]/', $password)) {
             $errors[] = 'Password must contain at least one special character';
         }
-        
         return empty($errors) ? ['valid' => true] : ['valid' => false, 'errors' => $errors];
     }
     
@@ -304,20 +132,7 @@ class AuthMiddleware {
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             return ['valid' => false, 'error' => 'Invalid email format'];
         }
-        
         return ['valid' => true];
-    }
-    
-    public function cleanExpiredTokens() {
-        try {
-            $stmt = $this->db->prepare("DELETE FROM api_tokens WHERE expires_at < NOW()");
-            $stmt->execute();
-            
-            return ['success' => true, 'deleted' => $stmt->rowCount()];
-            
-        } catch (PDOException $e) {
-            return ['success' => false, 'message' => 'Error cleaning expired tokens'];
-        }
     }
     
     private function sendUnauthorized($message) {
@@ -384,14 +199,6 @@ class ApiController {
                 }
                 break;
                 
-            case '/api/refresh':
-                if ($method === 'POST') {
-                    $this->refreshToken();
-                } else {
-                    $this->methodNotAllowed();
-                }
-                break;
-                
             case '/api/profile':
                 if ($method === 'GET') {
                     $this->getProfile();
@@ -450,33 +257,15 @@ class ApiController {
     }
     
     private function logout() {
-        $input = json_decode(file_get_contents('php://input'), true);
-        $token = $input['token'] ?? null;
-        
-        $result = $this->auth->logout($token);
+        $result = $this->auth->logout();
         $this->sendResponse($result);
-    }
-    
-    private function refreshToken() {
-        $input = json_decode(file_get_contents('php://input'), true);
-        $token = $input['token'] ?? '';
-        
-        if (empty($token)) {
-            $this->sendResponse(['error' => 'Token is required'], 400);
-            return;
-        }
-        
-        $result = $this->auth->refreshToken($token);
-        $this->sendResponse($result, $result['success'] ? 200 : 401);
     }
     
     private function getProfile() {
         $user = $this->auth->authenticate();
-        
         if (!$user) {
             return; // authenticate() already sent the error response
         }
-        
         $this->sendResponse(['user' => $user]);
     }
     
