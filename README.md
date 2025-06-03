@@ -2,11 +2,11 @@
 
 ## Base URL
 ```
-http://localhost/api/
+/api/
 ```
 oppure
 ```
-http://localhost/index.php/
+/index.php/
 ```
 
 ## 1. ENDPOINTS AUTENTICAZIONE
@@ -32,13 +32,11 @@ http://localhost/index.php/
     "data": {
         "success": true,
         "message": "User registered successfully",
-        "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
         "user": {
             "id": 4,
             "name": "Mario Rossi",
             "email": "mario.rossi@example.com"
-        },
-        "expires_in": 3600
+        }
     },
     "message": "User registered successfully",
     "timestamp": "2025-05-29 10:30:00"
@@ -67,13 +65,11 @@ http://localhost/index.php/
     "status": "success",
     "data": {
         "success": true,
-        "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
         "user": {
             "id": 4,
             "name": "Mario Rossi",
             "email": "mario.rossi@example.com"
-        },
-        "expires_in": 3600
+        }
     },
     "timestamp": "2025-05-29 10:35:00"
 }
@@ -84,9 +80,7 @@ http://localhost/index.php/
 
 **Request Body (opzionale):**
 ```json
-{
-    "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
-}
+{}
 ```
 
 **Response (200):**
@@ -105,25 +99,7 @@ http://localhost/index.php/
 ### 1.4 Refresh Token
 **Endpoint:** `POST /auth/refresh`
 
-**Request Body:**
-```json
-{
-    "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
-}
-```
-
-**Response (200):**
-```json
-{
-    "status": "success",
-    "data": {
-        "success": true,
-        "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
-        "expires_in": 3600
-    },
-    "timestamp": "2025-05-29 10:45:00"
-}
-```
+> **Nota:** Non necessario con autenticazione tramite sessione.
 
 ## 2. ENDPOINTS ARTISTI
 
@@ -388,15 +364,8 @@ GET /opera-details?nome=David
 
 ## 4. HEADERS RICHIESTI
 
-### Per Endpoint Pubblici
 ```
 Content-Type: application/json
-```
-
-### Per Endpoint Autenticati
-```
-Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
 ```
 
 ## 5. CODICI DI STATO HTTP
@@ -404,7 +373,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
 - **200 OK**: Richiesta completata con successo
 - **201 Created**: Risorsa creata con successo (registrazione)
 - **400 Bad Request**: Parametri mancanti o non validi
-- **401 Unauthorized**: Token mancante o non valido
+- **401 Unauthorized**: Non autenticato
 - **404 Not Found**: Risorsa non trovata
 - **405 Method Not Allowed**: Metodo HTTP non supportato
 - **500 Internal Server Error**: Errore interno del server
@@ -433,7 +402,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
 ```json
 {
     "error": "Unauthorized",
-    "message": "Authorization header missing"
+    "message": "Not authenticated"
 }
 ```
 
@@ -444,7 +413,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
 3. **Rate Limiting**: Configurato per massimo 1000 richieste/ora per IP
 4. **CORS**: Configurato per accettare richieste da qualsiasi origine (modificare in produzione)
 5. **Lingue Supportate**: it, en, es, fr per biografie e descrizioni
-6. **Token JWT**: Scadenza di 1 ora (3600 secondi)
+6. **Autenticazione**: Basata su sessione, non su token JWT
 
 ## 8. CONFIGURAZIONE DATABASE
 
@@ -467,24 +436,24 @@ Il database MiraDB deve essere configurato con le seguenti tabelle:
 
 ### Registrazione
 ```bash
-curl -X POST http://localhost/api/auth/register \
+curl -X POST http://<container-ip>/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"name":"Mario Rossi","email":"mario@example.com","password":"Password123!"}'
 ```
 
 ### Login
 ```bash
-curl -X POST http://localhost/api/auth/login \
+curl -X POST http://<container-ip>/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"mario@example.com","password":"Password123!"}'
 ```
 
 ### Lista Artisti
 ```bash
-curl -X GET "http://localhost/api/artisti?limit=5&search=Leonardo"
+curl -X GET "http://<container-ip>/api/artisti?limit=5&search=Leonardo"
 ```
 
 ### Dettagli Opera
 ```bash
-curl -X GET "http://localhost/api/opera-details?nome=La%20Gioconda"
+curl -X GET "http://<container-ip>/api/opera-details?nome=La%20Gioconda"
 ```
